@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Cost Chargeback with Tags in Snowflake — Snowflake Horizon Guide</title>
+  <meta name="description" content="A hands-on walkthrough of tag-based cost attribution in Snowflake: object tags, resource monitors, custom budgets, chargeback and abuse-detection queries." />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/themes/prism-tomorrow.min.css" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <a href="#main" class="skip-link">Skip to content</a>
+
+  <!-- ────── Nav ────── -->
+  <nav id="navbar">
+    <div class="nav-inner">
+      <a href="#" class="nav-brand">
+        <div class="nav-logo"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.59 13.41l-7.17 7.17a2 2 0 01-2.83 0L2 12V2h10l8.59 8.59a2 2 0 010 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg></div>
+        Cost Chargeback
+      </a>
+      <button class="nav-hamburger" aria-label="Toggle navigation" aria-expanded="false">
+        <span></span><span></span><span></span>
+      </button>
+      <ul class="nav-links" role="list">
+        <li><a href="#overview">Overview</a></li>
+        <li><a href="#tags">Tags</a></li>
+        <li><a href="#monitors">Guardrails</a></li>
+        <li><a href="#budgets">Budgets</a></li>
+        <li><a href="#chargeback">Chargeback</a></li>
+        <li><a href="#abuse">Abuse Detection</a></li>
+        <li><a href="#conclusion">Wrap-up</a></li>
+        <li><a href="https://github.com/sfc-gh-jacho/sfguide-cost-chargeback-tagging">GitHub</a></li>
+      </ul>
+    </div>
+  </nav>
+
+  <!-- ────── Hero ────── -->
+  <header class="hero" id="hero">
+    <div class="container">
+      <div class="hero-badge">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6"/></svg>
+        Snowflake Cost Governance
+      </div>
+      <h1>Cost Chargeback with <span>Tags</span> in Snowflake</h1>
+      <p>Turn one shared Snowflake bill into a clear, per-team chargeback, with guardrails that stop overspend before it happens.</p>
+      <div class="hero-ctas">
+        <a href="#overview" class="btn btn-primary">Start the Guide</a>
+        <a href="sql/cost_chargeback_setup.sql" class="btn btn-ghost" download>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          Download Full SQL
+        </a>
+      </div>
+      <div class="hero-stats">
+        <div class="hero-stat"><div class="hero-stat-val">~30 min</div><div class="hero-stat-label">Time to Complete</div></div>
+        <div class="hero-stat"><div class="hero-stat-val">4 + 2</div><div class="hero-stat-label">Business Units + Shared</div></div>
+        <div class="hero-stat"><div class="hero-stat-val">3</div><div class="hero-stat-label">Cost Tags</div></div>
+        <div class="hero-stat"><div class="hero-stat-val">10</div><div class="hero-stat-label">Ready-made Queries</div></div>
+      </div>
+    </div>
+  </header>
+
+  <main id="main">
+
+    <!-- ────── Overview ────── -->
+    <section id="overview">
+      <div class="container">
+        <div class="section-header reveal">
+          <div class="section-label">Overview</div>
+          <h2>From One Bill to Clear Accountability</h2>
+          <p>Without attribution, every credit is "IT overhead" and no one owns the spend. In this guide you tag resources to business units, add guardrails and budgets, and then answer "who spent what?" with a few queries on built-in views.</p>
+        </div>
+        <div class="pipeline reveal">
+          <div class="pipeline-card">
+            <div class="pipeline-step grad-1">1</div>
+            <h3>Tag</h3>
+            <p>Label warehouses, users and databases with a governed COST_CENTER tag, so every credit has an owner.</p>
+          </div>
+          <div class="pipeline-card">
+            <div class="pipeline-step grad-2">2</div>
+            <h3>Guard</h3>
+            <p>Resource monitors cap warehouse credits, and auto-suspend and statement timeouts cut idle and runaway spend.</p>
+          </div>
+          <div class="pipeline-card">
+            <div class="pipeline-step grad-3">3</div>
+            <h3>Budget</h3>
+            <p>Tag-based custom budgets track compute and serverless spend per team and alert before limits are reached.</p>
+          </div>
+          <div class="pipeline-card">
+            <div class="pipeline-step grad-4">4</div>
+            <h3>Charge back</h3>
+            <p>ACCOUNT_USAGE queries split dedicated and shared costs per business unit and flag waste and spikes.</p>
+          </div>
+        </div>
+
+        <h3 class="table-title reveal">The outcome <span class="illustrative">Illustrative</span></h3>
+        <div class="results reveal" data-results="before_after"></div>
+      </div>
+    </section>
+
+    <!-- ────── Prerequisites ────── -->
+    <section id="prereqs" class="bg-alt">
+      <div class="container narrow">
+        <div class="section-header reveal">
+          <div class="section-label">Prerequisites</div>
+          <h2>Before You Begin</h2>
+        </div>
+        <ul class="checklist reveal">
+          <li><strong>Snowflake Enterprise Edition or higher.</strong> Object tagging and tag-based custom budgets require it.</li>
+          <li><strong>ACCOUNTADMIN</strong>, or <code>&lt;YOUR_ROLE&gt;</code> with CREATE WAREHOUSE, CREATE DATABASE, CREATE USER, CREATE ROLE and APPLY TAG on the account. Only ACCOUNTADMIN can create resource monitors.</li>
+          <li><strong>Access to <code>SNOWFLAKE.ACCOUNT_USAGE</code>.</strong> ACCOUNTADMIN has it by default. Other roles need IMPORTED PRIVILEGES on the SNOWFLAKE database.</li>
+          <li><strong>A Snowsight SQL worksheet.</strong> The script creates its own prefixed objects (<code>CB_*</code> and <code>CHARGEBACK_DEMO_DB</code>) and changes nothing that already exists.</li>
+          <li><strong>Patience for latency.</strong> ACCOUNT_USAGE views lag by minutes to hours, so the queries in Steps 7–8 fill in over time.</li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- ────── Steps ────── -->
+    <section id="resources">
+      <div class="container narrow">
+        <div class="step reveal">
+          <div class="step-head"><div class="deploy-num">1</div><div><div class="section-label">Step 1</div><h2>Create Demo Resources</h2></div></div>
+          <p>This step creates the resources a real account already has: PROD and DEV warehouses for each business unit, two shared warehouses, a database per unit and five demo users. Warehouses are XSMALL and start suspended, and the users are service users with no credentials, so they cost nothing and can't log in.</p>
+          <div class="code-wrap" data-step="resources"></div>
+        </div>
+      </div>
+    </section>
+
+    <section id="tags" class="bg-alt">
+      <div class="container narrow">
+        <div class="step reveal">
+          <div class="step-head"><div class="deploy-num">2</div><div><div class="section-label">Step 2</div><h2>Create Cost Tags</h2></div></div>
+          <p>Three tags drive everything: COST_CENTER (who pays), ENVIRONMENT (PROD vs. DEV) and an optional free-form PROJECT tag. <code>ALLOWED_VALUES</code> makes COST_CENTER a governed list, so a typo like "Sales " can't quietly create an orphaned cost bucket.</p>
+          <div class="code-wrap" data-step="tags"></div>
+        </div>
+      </div>
+    </section>
+
+    <section id="apply">
+      <div class="container narrow">
+        <div class="step reveal">
+          <div class="step-head"><div class="deploy-num">3</div><div><div class="section-label">Step 3</div><h2>Tag Warehouses, Users and Databases</h2></div></div>
+          <p>Each object type answers a different question. Warehouse tags attribute dedicated compute, user tags split shared warehouses by who actually ran the queries, and database tags attribute storage. In production, apply the tags in your provisioning automation so nothing is ever created untagged.</p>
+          <div class="code-wrap" data-step="apply"></div>
+        </div>
+      </div>
+    </section>
+
+    <section id="monitors" class="bg-alt">
+      <div class="container narrow">
+        <div class="step reveal">
+          <div class="step-head"><div class="deploy-num">4</div><div><div class="section-label">Step 4</div><h2>Resource Monitors and Guardrails</h2></div></div>
+          <p>Resource monitors are the hard stop. Each business unit's warehouses share a monthly credit quota that notifies at 75% and 90% and suspends at 100%. Short auto-suspend times and statement timeouts address the two most common sources of waste: idle warehouses and runaway queries.</p>
+          <div class="callout warn-callout">The account-level monitor (4a) is commented out on purpose. It applies to <strong>every</strong> warehouse in the account and suspends them all at its limit. Size the quota to your real usage before you enable it.</div>
+          <div class="code-wrap" data-step="monitors"></div>
+        </div>
+      </div>
+    </section>
+
+    <section id="budgets">
+      <div class="container narrow">
+        <div class="step reveal">
+          <div class="step-head"><div class="deploy-num">5</div><div><div class="section-label">Step 5</div><h2>Tag-based Custom Budgets</h2></div></div>
+          <p>Budgets close the gap that resource monitors leave: they include serverless features such as Snowpipe, tasks and auto-clustering, and they alert on <em>projected</em> spend. Because each budget is scoped by the COST_CENTER tag, a newly tagged resource is added to the right budget automatically.</p>
+          <div class="code-wrap" data-step="budgets"></div>
+          <div class="callout">New budget scopes can take up to six hours to show usage. To see results sooner, call <code>&lt;budget&gt;!REFRESH_USAGE()</code>.</div>
+        </div>
+      </div>
+    </section>
+
+    <section id="workload" class="bg-alt">
+      <div class="container narrow">
+        <div class="step reveal">
+          <div class="step-head"><div class="deploy-num">6</div><div><div class="section-label">Step 6 · Optional</div><h2>Generate a Sample Workload</h2></div></div>
+          <p>A new account has no usage history, so the reports would come back empty. A few short queries on the dedicated warehouses create some metering, well under one credit in total. To try shared-warehouse attribution, tag your own user and run a query on the shared warehouse.</p>
+          <div class="code-wrap" data-step="workload"></div>
+        </div>
+      </div>
+    </section>
+
+    <section id="chargeback">
+      <div class="container narrow">
+        <div class="step reveal">
+          <div class="step-head"><div class="deploy-num">7</div><div><div class="section-label">Step 7</div><h2>Chargeback Queries</h2></div></div>
+          <p>These queries join usage views to <code>TAG_REFERENCES</code> to answer "who spent what?" Dedicated warehouses map straight to their owner. Shared warehouses are split with <code>QUERY_ATTRIBUTION_HISTORY</code>, which assigns credits to each query, and the user tags then roll those queries up to business units.</p>
+          <div class="code-wrap" data-step="chargeback"></div>
+          <h3 class="table-title">7a · Dedicated warehouse costs <span class="illustrative">Illustrative</span></h3>
+          <div class="results" data-results="dedicated"></div>
+          <h3 class="table-title">7b · Shared warehouse split by user tags <span class="illustrative">Illustrative</span></h3>
+          <div class="results" data-results="shared"></div>
+          <h3 class="table-title">7e · Monthly chargeback summary <span class="illustrative">Illustrative</span></h3>
+          <div class="results" data-results="summary"></div>
+        </div>
+      </div>
+    </section>
+
+    <section id="abuse" class="bg-alt">
+      <div class="container narrow">
+        <div class="step reveal">
+          <div class="step-head"><div class="deploy-num">8</div><div><div class="section-label">Step 8</div><h2>Abuse Detection and Accountability</h2></div></div>
+          <p>Attribution tells you who spent the credits. These queries show where spend is going wrong: the most expensive queries and users, warehouses that burn credits while idle, business units nearing their budget, and sudden week-over-week spikes. Rows highlighted below are the ones a platform team would act on.</p>
+          <div class="code-wrap" data-step="abuse"></div>
+          <h3 class="table-title">8d · Budget status by business unit <span class="illustrative">Illustrative</span></h3>
+          <div class="results" data-results="budget_status"></div>
+          <h3 class="table-title">8c · Idle and low-utilization warehouses <span class="illustrative">Illustrative</span></h3>
+          <div class="results" data-results="idle"></div>
+          <h3 class="table-title">8e · Week-over-week trend <span class="illustrative">Illustrative</span></h3>
+          <div class="results" data-results="wow"></div>
+        </div>
+      </div>
+    </section>
+
+    <section id="multiaccount">
+      <div class="container narrow">
+        <div class="step reveal">
+          <div class="step-head"><div class="deploy-num">9</div><div><div class="section-label">Step 9 · Optional</div><h2>Going Multi-Account</h2></div></div>
+          <p>If each business unit has its own Snowflake account, define the tags once and replicate them so every account uses identical values. Then roll costs up from the organization account with <code>ORGANIZATION_USAGE</code>. Replace the <code>&lt;YOUR_ORG&gt;</code> and account placeholders with your own identifiers.</p>
+          <div class="code-wrap" data-step="multiaccount"></div>
+        </div>
+      </div>
+    </section>
+
+    <section id="cleanup" class="bg-alt">
+      <div class="container narrow">
+        <div class="step reveal">
+          <div class="step-head"><div class="deploy-num">10</div><div><div class="section-label">Step 10</div><h2>Clean Up</h2></div></div>
+          <p>Uncomment and run this block to remove everything the demo created. Tagged objects are dropped before <code>CHARGEBACK_DEMO_DB</code>, which holds the tags and budgets. If you tagged your own user in Step 6, unset that tag first.</p>
+          <div class="code-wrap" data-step="cleanup"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ────── Conclusion ────── -->
+    <section id="conclusion">
+      <div class="container">
+        <div class="section-header reveal">
+          <div class="section-label">Wrap-up</div>
+          <h2>Key Takeaways</h2>
+          <p>Cost accountability in Snowflake needs no extra tooling: tags, guardrails, budgets and built-in usage views cover it.</p>
+        </div>
+        <div class="cortex-grid reveal">
+          <div class="cortex-card"><h3>Tag at creation time</h3><p>Governed tag values applied by your provisioning automation keep every credit attributable from day one.</p></div>
+          <div class="cortex-card"><h3>Shared costs can be fair</h3><p>User tags and QUERY_ATTRIBUTION_HISTORY split shared warehouses by actual usage instead of an even split.</p></div>
+          <div class="cortex-card"><h3>Prevent, then report</h3><p>Monitors and budgets stop overspend as it happens. Chargeback queries explain it after the fact.</p></div>
+          <div class="cortex-card"><h3>Look for waste</h3><p>Idle warehouses, runaway queries and sudden spikes are the fastest savings, and one query finds each.</p></div>
+        </div>
+        <div class="doc-links reveal">
+          <h3>Learn more in the Snowflake documentation</h3>
+          <div class="doc-grid">
+            <a href="https://docs.snowflake.com/en/user-guide/cost-attributing" target="_blank" rel="noopener">Attributing Cost →</a>
+            <a href="https://docs.snowflake.com/en/user-guide/object-tagging/introduction" target="_blank" rel="noopener">Object Tagging →</a>
+            <a href="https://docs.snowflake.com/en/user-guide/resource-monitors" target="_blank" rel="noopener">Resource Monitors →</a>
+            <a href="https://docs.snowflake.com/en/user-guide/budgets" target="_blank" rel="noopener">Budgets →</a>
+            <a href="https://docs.snowflake.com/en/sql-reference/account-usage/query_attribution_history" target="_blank" rel="noopener">QUERY_ATTRIBUTION_HISTORY →</a>
+          </div>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- ────── Footer ────── -->
+  <footer>
+    <div class="container">
+      <div class="footer-inner">
+        <div class="footer-col">
+          <h4>Guide</h4>
+          <a href="#overview">Overview</a>
+          <a href="#tags">Cost Tags</a>
+          <a href="#budgets">Budgets</a>
+          <a href="#chargeback">Chargeback Queries</a>
+        </div>
+        <div class="footer-col">
+          <h4>Resources</h4>
+          <a href="sql/cost_chargeback_setup.sql" download>Download SQL</a>
+          <a href="https://github.com/sfc-gh-jacho/sfguide-cost-chargeback-tagging">GitHub Repository</a>
+          <a href="https://docs.snowflake.com/en/guides-overview-cost" target="_blank" rel="noopener">Cost Management Docs</a>
+        </div>
+      </div>
+      <div class="footer-bottom">
+        <p class="footer-disclaimer">All business units, objects and credit figures in this guide are synthetic and illustrative only. Your results will depend on your own account's usage. This site has no connection to any Snowflake account.</p>
+        <span class="snow-badge">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="12" y1="2" x2="12" y2="22"/><line x1="3.3" y1="7" x2="20.7" y2="17"/><line x1="3.3" y1="17" x2="20.7" y2="7"/></svg>
+          Built on Snowflake Horizon
+        </span>
+      </div>
+    </div>
+  </footer>
+
+  <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/prism.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-sql.min.js"></script>
+  <script src="script.js"></script>
+</body>
+</html>
