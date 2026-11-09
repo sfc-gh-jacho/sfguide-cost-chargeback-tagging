@@ -16,8 +16,10 @@
  It does NOT modify any existing objects in your account. Step 10 removes
  everything it creates.
 
- Requires Enterprise Edition (or higher) and ACCOUNTADMIN, or <YOUR_ROLE>
- with equivalent privileges (see README).
+ Requires Enterprise Edition (or higher). Runs as ACCOUNTADMIN by default,
+ or as a least-privilege CB_DEMO_ROLE (see the top of Step 1 and the README).
+ Resource monitors (Step 4) and the budget-creator grant (Step 5a) always
+ need ACCOUNTADMIN; those two blocks switch to it explicitly.
 ================================================================================
 */
 
@@ -28,7 +30,25 @@
 -- In a real account these already exist. Here we create small stand-ins.
 -- Warehouses are XSMALL and start suspended, so they cost nothing until used.
 
-USE ROLE ACCOUNTADMIN;
+-- Choose the role that runs the demo:
+--   'ACCOUNTADMIN' - simplest, for sandbox accounts
+--   'CB_DEMO_ROLE' - least privilege; create it once with the block below
+SET demo_role = 'ACCOUNTADMIN';
+
+-- OPTIONAL: least-privilege demo role. An administrator runs this ONCE,
+-- then set demo_role = 'CB_DEMO_ROLE' above.
+-- USE ROLE ACCOUNTADMIN;
+-- CREATE ROLE IF NOT EXISTS CB_DEMO_ROLE COMMENT = 'Runs the cost chargeback demo';
+-- GRANT CREATE DATABASE  ON ACCOUNT TO ROLE CB_DEMO_ROLE;   -- governance + BU databases
+-- GRANT CREATE WAREHOUSE ON ACCOUNT TO ROLE CB_DEMO_ROLE;   -- BU and shared warehouses
+-- GRANT CREATE USER      ON ACCOUNT TO ROLE CB_DEMO_ROLE;   -- demo service users
+-- GRANT DATABASE ROLE SNOWFLAKE.USAGE_VIEWER      TO ROLE CB_DEMO_ROLE;  -- metering + query attribution
+-- GRANT DATABASE ROLE SNOWFLAKE.GOVERNANCE_VIEWER TO ROLE CB_DEMO_ROLE;  -- TAG_REFERENCES, QUERY_HISTORY
+-- GRANT DATABASE ROLE SNOWFLAKE.OBJECT_VIEWER     TO ROLE CB_DEMO_ROLE;  -- TABLE_STORAGE_METRICS
+-- SET my_user = CURRENT_USER();
+-- GRANT ROLE CB_DEMO_ROLE TO USER IDENTIFIER($my_user);
+
+USE ROLE IDENTIFIER($demo_role);
 
 -- Governance database that will hold the tags and budgets
 CREATE DATABASE IF NOT EXISTS CHARGEBACK_DEMO_DB;
@@ -160,6 +180,8 @@ SELECT 'CB_ENGINEERING_DB', 'DATABASE',
 -- ALTER ACCOUNT SET RESOURCE_MONITOR = CB_ACCOUNT_MONTHLY_MONITOR;
 
 -- 4b. One monitor per business unit, shared by its PROD and DEV warehouses
+--     Resource monitors can only be created and assigned by ACCOUNTADMIN.
+USE ROLE ACCOUNTADMIN;
 CREATE OR REPLACE RESOURCE MONITOR CB_SALES_MONITOR
     WITH CREDIT_QUOTA = 500 FREQUENCY = MONTHLY START_TIMESTAMP = IMMEDIATELY
     TRIGGERS ON 75 PERCENT DO NOTIFY
@@ -201,6 +223,7 @@ ALTER WAREHOUSE CB_SHARED_REPORTING_WH SET RESOURCE_MONITOR = CB_SHARED_MONITOR;
 ALTER WAREHOUSE CB_SHARED_ETL_WH       SET RESOURCE_MONITOR = CB_SHARED_MONITOR;
 
 -- 4c. Warehouse guardrails: suspend quickly when idle, kill runaway queries
+USE ROLE IDENTIFIER($demo_role);
 --     PROD: 5 min auto-suspend, 30 min timeout. DEV: 1 min, 15 min.
 ALTER WAREHOUSE CB_SALES_WH_PROD        SET AUTO_SUSPEND = 300 AUTO_RESUME = TRUE STATEMENT_TIMEOUT_IN_SECONDS = 1800;
 ALTER WAREHOUSE CB_MARKETING_WH_PROD    SET AUTO_SUSPEND = 300 AUTO_RESUME = TRUE STATEMENT_TIMEOUT_IN_SECONDS = 1800;
@@ -225,7 +248,9 @@ SHOW WAREHOUSES LIKE 'CB\\_%';
 -- Because they follow the COST_CENTER tag, newly tagged resources are
 -- included automatically.
 
--- 5a. A dedicated role for the central platform team to manage budgets
+-- 5a. A dedicated role for the central platform team to manage budgets.
+--     Granting SNOWFLAKE.BUDGET_CREATOR requires ACCOUNTADMIN.
+USE ROLE ACCOUNTADMIN;
 CREATE ROLE IF NOT EXISTS CB_BUDGET_ADMIN;
 GRANT DATABASE ROLE SNOWFLAKE.BUDGET_CREATOR TO ROLE CB_BUDGET_ADMIN;
 GRANT USAGE ON DATABASE CHARGEBACK_DEMO_DB TO ROLE CB_BUDGET_ADMIN;
@@ -234,6 +259,7 @@ GRANT CREATE SNOWFLAKE.CORE.BUDGET ON SCHEMA CHARGEBACK_DEMO_DB.GOVERNANCE TO RO
 GRANT APPLYBUDGET ON TAG CHARGEBACK_DEMO_DB.GOVERNANCE.COST_CENTER TO ROLE CB_BUDGET_ADMIN;
 GRANT USAGE ON WAREHOUSE CB_SHARED_ETL_WH TO ROLE CB_BUDGET_ADMIN;
 GRANT ROLE CB_BUDGET_ADMIN TO ROLE ACCOUNTADMIN;
+GRANT ROLE CB_BUDGET_ADMIN TO ROLE IDENTIFIER($demo_role);
 
 USE ROLE CB_BUDGET_ADMIN;
 USE WAREHOUSE CB_SHARED_ETL_WH;
@@ -277,7 +303,7 @@ CALL SHARED_BUDGET!SET_RESOURCE_TAGS(
 -- 5d. Confirm what each budget tracks
 CALL SALES_BUDGET!GET_BUDGET_SCOPE();
 
-USE ROLE ACCOUNTADMIN;
+USE ROLE IDENTIFIER($demo_role);
 
 -- [step:workload]
 -- ============================================================================
@@ -655,7 +681,7 @@ ORDER BY tr.tag_value, week_start;
 -- ============================================================================
 -- Order matters: drop tagged objects before the database that holds the tags.
 
--- USE ROLE ACCOUNTADMIN;
+-- USE ROLE IDENTIFIER($demo_role);
 -- -- If you tagged your own user in Step 6:
 -- -- SET my_user = CURRENT_USER();
 -- -- ALTER USER IDENTIFIER($my_user) UNSET TAG CHARGEBACK_DEMO_DB.GOVERNANCE.COST_CENTER;
@@ -669,11 +695,6 @@ ORDER BY tr.tag_value, week_start;
 -- DROP WAREHOUSE IF EXISTS CB_ENGINEERING_WH_DEV;
 -- DROP WAREHOUSE IF EXISTS CB_SHARED_REPORTING_WH;
 -- DROP WAREHOUSE IF EXISTS CB_SHARED_ETL_WH;
--- DROP RESOURCE MONITOR IF EXISTS CB_SALES_MONITOR;
--- DROP RESOURCE MONITOR IF EXISTS CB_MARKETING_MONITOR;
--- DROP RESOURCE MONITOR IF EXISTS CB_FINANCE_MONITOR;
--- DROP RESOURCE MONITOR IF EXISTS CB_ENGINEERING_MONITOR;
--- DROP RESOURCE MONITOR IF EXISTS CB_SHARED_MONITOR;
 -- DROP USER IF EXISTS CB_SALES_ANALYST;
 -- DROP USER IF EXISTS CB_MARKETING_ANALYST;
 -- DROP USER IF EXISTS CB_FINANCE_ANALYST;
@@ -685,4 +706,13 @@ ORDER BY tr.tag_value, week_start;
 -- DROP DATABASE IF EXISTS CB_ENGINEERING_DB;
 -- DROP DATABASE IF EXISTS CB_SHARED_REFERENCE_DB;
 -- DROP DATABASE IF EXISTS CHARGEBACK_DEMO_DB;   -- tags and budgets
+-- -- Resource monitors and the budget role were created as ACCOUNTADMIN:
+-- USE ROLE ACCOUNTADMIN;
+-- DROP RESOURCE MONITOR IF EXISTS CB_SALES_MONITOR;
+-- DROP RESOURCE MONITOR IF EXISTS CB_MARKETING_MONITOR;
+-- DROP RESOURCE MONITOR IF EXISTS CB_FINANCE_MONITOR;
+-- DROP RESOURCE MONITOR IF EXISTS CB_ENGINEERING_MONITOR;
+-- DROP RESOURCE MONITOR IF EXISTS CB_SHARED_MONITOR;
 -- DROP ROLE IF EXISTS CB_BUDGET_ADMIN;
+-- DROP ROLE IF EXISTS CB_DEMO_ROLE;   -- only if you created the least-privilege role
+-- UNSET demo_role;
